@@ -1,0 +1,210 @@
+---
+title: "Pratical MachineLearning - Course Project"
+author: "Vitor Zamprogno amancio Pereira"
+date: "4/1/2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+library(mlbench)
+library(caret)
+library(corrplot)
+library(rpart.plot)
+# For repeatable results
+set.seed(2337)
+```
+## Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+
+## The HAR Dataset 
+The data was collected by wereable devices containinig accelerometers that takes measures while the subjects was making exercices. The dataset was divided in 5 classes (sitting-down, standing-up, standing, walking, and sitting) collected on 8 hours of activities of 4 healthy subjects.At total it was collected 165,633 samples for the study. The approach  proposed is to investigate "how (well)" an activity was performed by the wearer. In the dataset the "how (well)"  was determined by the "classe" variable , which indicates the correction or error committed according to the table below:
+```{r tb1, echo=FALSE}
+tb1=data.frame(classe=c("A", "B","C","D","E"),description=c("exactly according to the specification","throwing the elbows to the front","lifting the dumbbell only halfway","lowering the dumbbell only halfway","throwing the hips to the front"))
+kable(tb1)
+```
+
+For more information see: 
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+
+The project data are available here:
+
+- Trainig: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+- Test: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Importing the data
+```{r, echo=TRUE}
+url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileName=basename(url)
+if (!file.exists(fileName))
+{
+      download.file(url.training,basename(url.training),method="curl")
+}
+harDataset=read.csv(fileName)
+#
+url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+fileName=basename(url)
+if (!file.exists(fileName))
+{
+    download.file(url.testing,basename(url.testing),method="curl")
+}
+testing=read.csv(fileName)
+```
+
+## Exploratory Analysis and Variable selection
+##### Variables names
+```{r, echo=TRUE}
+x=names(harDataset)
+x
+```
+The first 7 variables are identification information and time of measurements and do not 
+directly influence the variable to be predicted (classe), and thus can be removed.
+```{r, echo=TRUE}
+wHarDataset = harDataset[,-1:-7]
+dim(wHarDataset)
+```
+
+##### Looking at the file structure
+```{r, echo=TRUE}
+str(harDataset)
+```
+There are variables with NA and ""
+
+##### Let's replace the values "" by NA
+```{r, echo=TRUE}
+wHarDataset[wHarDataset==""]=NA
+```
+
+##### Counting the NA values per column
+```{r, echo=TRUE}
+NAAmountPerColumn=sapply(wHarDataset,function(x) { sum(is.na(x)) })
+table(NAAmountPerColumn)
+```
+There are 67 columns that contain 19216 NAs for 19622 rows
+```{r, echo=TRUE}
+print(paste(round((((nrow(wHarDataset) - 19216))/nrow(wHarDataset)) * 100,digits=2),"% filled",sep=""))
+```
+A very small percentage of valid information and so we can remove these columns
+
+##### Removing columns with very few data
+```{r, echo=TRUE}
+wHarDataset =  wHarDataset[,NAAmountPerColumn==0]
+dim(wHarDataset)
+```
+
+#### Analyzing the correlation between the variables
+
+##### Identifying the highest correlations
+```{r, echo=TRUE}
+# Calculating the correlation matrix 
+mCorrelation <- cor(wHarDataset[sapply(wHarDataset,function(x) {!is.factor(x)})])
+# Identifying variables with high correlation  (>0.75)
+hCorrVars <- findCorrelation(mCorrelation, cutoff=0.5,names=TRUE, exact=TRUE)
+print(hCorrVars)
+```
+
+
+##### Removing this variables
+```{r, echo=TRUE}
+dim(wHarDataset)
+wHarDataset=wHarDataset[ , !(names(wHarDataset) %in% hCorrVars)]
+dim(wHarDataset)
+names(wHarDataset)
+```
+21 parameters remaining to be used to predict class
+
+
+## Splitingthe data into a traininig and a test dataset 
+```{r, echo=TRUE}
+inTrain = createDataPartition(y=wHarDataset$classe,p=0.75,list=FALSE)
+training=wHarDataset[inTrain,]
+validating=wHarDataset[-inTrain,]
+dim(training)
+dim(validating)
+```
+
+
+## Creating Prediction Models
+
+There will be 3 models of the following types: Classification tree, Random Forest and Support Vector Machines.
+
+
+#### First setting  general parameters for modeling
+```{r, echo=TRUE}
+# Cross validation -> 10 folds
+tControl = trainControl(method="cv", number=10)
+# Metric for select the optimal model
+metric="Accuracy"
+```
+
+
+#### Classification tree
+```{r, echo=TRUE}
+modCT = train(classe ~ ., data = training,method='rpart', trControl = tControl,metric=metric)
+print(modCT$finalModel)
+rpart.plot(modCT$finalModel,main="Classification Tree")
+# Validating
+predCT=predict(modCT, newdata = validating)
+cMatrixCT=confusionMatrix(validating$classe,predCT)
+cMatrixCT
+```
+
+#### Random Forest
+```{r, echo=TRUE}
+modRF = train(classe ~ .,data=training,method='rf', trControl = tControl,metric=metric)
+print(modRF$finalModel)
+plot(modRF$finalModel)
+# Validating
+predRF=predict(modRF, newdata = validating)
+cMatrixRF=confusionMatrix(validating$classe,predRF)
+cMatrixRF
+```
+
+#### Modeling using Generalized Boosted Regression
+```{r, echo=TRUE}
+modGBM = train(classe ~ .,data=training,method="gbm", trControl = tControl,metric=metric,verbose=FALSE,)
+print(modGBM$finalModel)
+plot(modGBM$finalModel)
+# Validating
+predGBM=predict(modGBM, newdata = validating)
+cMatrixGBM=confusionMatrix(validating$classe,predGBM)
+cMatrixGBM
+```
+
+#### Choosing the better model
+```{r, echo=TRUE}
+dfOverall=rbind(cMatrixCT$overall,cMatrixRF$overall,cMatrixGBM$overall)
+rownames(dfOverall)=c("Classification Tree","Random Forest", "Generalized Boosted Regression")
+kable(dfOverall[,1:4])
+```
+##### ** Random Forest model showed better acccuracy, let's use this model **
+
+## Testing the model 
+
+#### Cleaning the testing dataset
+```{r, echo=TRUE}
+dim(testing)
+trainVars=names(training)
+testing=testing[ ,(names(testing) %in% trainVars)]
+dim(testing)
+```
+
+#### Predicting
+```{r, echo=TRUE}
+predTest=predict(modRF, newdata = testing)
+predTest
+```
+
+
